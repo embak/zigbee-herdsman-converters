@@ -1,8 +1,10 @@
 'use strict';
 
 const devices = require('./devices');
+const exposes = require('./lib/exposes');
 const toZigbee = require('./converters/toZigbee');
 const fromZigbee = require('./converters/fromZigbee');
+const assert = require('assert');
 
 // key: zigbeeModel, value: array of definitions (most of the times 1)
 const lookup = new Map();
@@ -35,7 +37,26 @@ function getFromLookup(zigbeeModel) {
     return lookup.get(zigbeeModel);
 }
 
+const converterRequiredFields = {
+    model: 'String',
+    vendor: 'String',
+    description: 'String',
+    fromZigbee: 'Array',
+    toZigbee: 'Array',
+    exposes: 'Array',
+};
+
+function validateDefinition(definition) {
+    for (const [field, expectedType] of Object.entries(converterRequiredFields)) {
+        assert.notStrictEqual(null, definition[field], `Converter field ${field} is null`);
+        assert.notStrictEqual(undefined, definition[field], `Converter field ${field} is undefined`);
+        const msg = `Converter field ${field} expected type doenst match to ${definition[field]}`;
+        assert.strictEqual(definition[field].constructor.name, expectedType, msg);
+    }
+}
+
 function addDefinition(definition) {
+    validateDefinition(definition);
     definitions.push(definition);
 
     if (definition.hasOwnProperty('fingerprint')) {
@@ -61,7 +82,8 @@ function findByZigbeeModel(zigbeeModel) {
     }
 
     const candidates = getFromLookup(zigbeeModel);
-    return candidates ? candidates[0] : null;
+    // Multiple candidates possible, to use external converters in priority, use last one.
+    return candidates ? candidates[candidates.length-1] : null;
 }
 
 function findByDevice(device) {
@@ -75,8 +97,11 @@ function findByDevice(device) {
     } else if (candidates.length === 1 && candidates[0].hasOwnProperty('zigbeeModel')) {
         return candidates[0];
     } else {
-        // Multiple candidates possible, first try to match based on fingerprint, return the first matching one.
-        for (const candidate of candidates) {
+        // Multiple candidates possible, to use external converters in priority, reverse the order of candidates before searching.
+        const reversedCandidates = candidates.reverse();
+
+        // First try to match based on fingerprint, return the first matching one.
+        for (const candidate of reversedCandidates) {
             if (candidate.hasOwnProperty('fingerprint')) {
                 for (const fingerprint of candidate.fingerprint) {
                     if (fingerprintMatch(fingerprint, device)) {
@@ -87,7 +112,7 @@ function findByDevice(device) {
         }
 
         // Match based on fingerprint failed, return first matching definition based on zigbeeModel
-        for (const candidate of candidates) {
+        for (const candidate of reversedCandidates) {
             if (candidate.hasOwnProperty('zigbeeModel') && candidate.zigbeeModel.includes(device.modelID)) {
                 return candidate;
             }
@@ -131,6 +156,8 @@ function fingerprintMatch(fingerprint, device) {
 
 module.exports = {
     devices: definitions,
+    exposes,
+    definitions,
     findByZigbeeModel, // Legacy method, use findByDevice instead.
     findByDevice,
     toZigbeeConverters: toZigbee,
